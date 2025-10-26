@@ -1,0 +1,11 @@
+.env
+token.json
+pinterest_token.json
+downloads/
+logs/
+client_secret.json
+uploaded_files.txt
+last_upload_date.txt
+__pycache__/
+*.pyc
+venv/
