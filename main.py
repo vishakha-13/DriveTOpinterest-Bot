@@ -410,4 +410,21 @@ def main_loop():
         raise
 
 if __name__ == "__main__":
-    main_loop()
+    try:
+        # Run your Pinterest automation loop
+        from threading import Thread
+        t = Thread(target=main_loop)
+        t.start()
+
+        # 🟢 Keep-alive mini web server (so Render detects a port)
+        from http.server import SimpleHTTPRequestHandler, HTTPServer
+        import socket
+
+        PORT = int(os.environ.get("PORT", 10000))
+        with HTTPServer(("0.0.0.0", PORT), SimpleHTTPRequestHandler) as httpd:
+            print(f"✅ Keep-alive server running on port {PORT}")
+            httpd.serve_forever()
+
+    except Exception as e:
+        print(f"❌ Critical error during startup: {e}")
+        send_email_notification("Critical Error", str(e))
