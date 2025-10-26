@@ -60,28 +60,35 @@ os.makedirs(LOG_DIR, exist_ok=True)
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 def connect_drive():
-    """Connect to Google Drive API."""
+    """Connect to Google Drive API (Render-compatible, no browser needed)."""
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
+    token_data = os.getenv("GOOGLE_TOKEN_JSON")
+
+    try:
+        # ✅ Use token from environment if available (for Render)
+        if token_data:
+            creds = Credentials.from_authorized_user_info(json.loads(token_data), SCOPES)
+            print("🔐 Loaded Drive token from environment.")
+        # ✅ Otherwise, fall back to local token.json (for local testing)
+        elif os.path.exists("token.json"):
+            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+            print("📁 Loaded Drive token from local file.")
+        else:
+            raise RuntimeError("❌ No Google Drive token found — run locally once to generate token.json")
+
+        # ✅ Refresh token if expired
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-        else:
-            google_credentials = os.getenv("GOOGLE_CREDENTIALS_JSON")
-            if google_credentials:
-                creds_data = json.loads(google_credentials)
-                flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
-            else:
-                raise FileNotFoundError("❌ GOOGLE_CREDENTIALS_JSON not found in environment variables.")
-            creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+            print("🔁 Token refreshed successfully.")
 
-    print("✅ Connected to Google Drive.")
-    send_email_notification("Drive Connected", "✅ Successfully connected to Google Drive API.")
-    return build('drive', 'v3', credentials=creds)
+        print("✅ Connected to Google Drive (Render-compatible).")
+        send_email_notification("Drive Connected", "✅ Successfully connected to Google Drive API.")
+        return build("drive", "v3", credentials=creds)
 
+    except Exception as e:
+        print(f"❌ Failed to connect to Google Drive: {e}")
+        send_email_notification("Drive Connection Failed", f"❌ Error: {e}")
+        raise
 
 def list_images(service, folder_id):
     """List images in a Drive folder."""
