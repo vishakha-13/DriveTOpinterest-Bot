@@ -68,14 +68,20 @@ def connect_drive():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
+            google_credentials = os.getenv("GOOGLE_CREDENTIALS_JSON")
+            if google_credentials:
+                creds_data = json.loads(google_credentials)
+                flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
+            else:
+                raise FileNotFoundError("❌ GOOGLE_CREDENTIALS_JSON not found in environment variables.")
             creds = flow.run_local_server(port=0)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
-    
+
     print("✅ Connected to Google Drive.")
     send_email_notification("Drive Connected", "✅ Successfully connected to Google Drive API.")
     return build('drive', 'v3', credentials=creds)
+
 
 def list_images(service, folder_id):
     """List images in a Drive folder."""
