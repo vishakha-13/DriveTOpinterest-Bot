@@ -26,10 +26,8 @@ APP_SECRET = os.getenv("PINTEREST_APP_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
 BOARD_ID = os.getenv("PINTEREST_BOARD_ID")
 
-FOLDER_IDS = [
-    os.getenv("DRIVE_FOLDER_ID_1"),
-    os.getenv("DRIVE_FOLDER_ID_2"),
-]
+FOLDER_IDS = [value for key, value in os.environ.items() if key.startswith("DRIVE_FOLDER_ID_")]
+
 
 # Posting Schedule Settings
 MAX_PINS_PER_DAY = int(os.getenv("MAX_PINS_PER_DAY", 3))
