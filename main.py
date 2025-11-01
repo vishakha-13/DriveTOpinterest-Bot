@@ -31,7 +31,7 @@ FOLDER_IDS = [value for key, value in os.environ.items() if key.startswith("DRIV
 
 # Posting Schedule Settings
 MAX_PINS_PER_DAY = int(os.getenv("MAX_PINS_PER_DAY", 3))
-POST_TIME = os.getenv("POST_TIME", "02:00")  # Format: HH:MM
+POST_TIME = os.getenv("POST_TIME", "02:30")  # Format: HH:MM
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
 
 PIN_TITLE = "Ma Adya Mahakali"
