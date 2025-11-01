@@ -9,3 +9,4 @@ last_upload_date.txt
 __pycache__/
 *.pyc
 venv/
+get_pinterest_token.py

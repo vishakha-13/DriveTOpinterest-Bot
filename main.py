@@ -177,7 +177,9 @@ def pinterest_auth():
     server.handle_request()
 
 def get_pinterest_token():
-    """Read token file securely."""
+    token = os.getenv("PINTEREST_ACCESS_TOKEN")
+    if token:
+        return token
     if not os.path.exists(TOKEN_FILE):
         return None
     try:
@@ -186,6 +188,7 @@ def get_pinterest_token():
     except json.JSONDecodeError:
         print("❌ Invalid token file format")
         return None
+
 
 def is_uploaded(filename):
     """Check if a file has already been uploaded."""
