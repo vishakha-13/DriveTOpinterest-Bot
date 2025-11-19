@@ -1,5 +1,6 @@
 import os
 import io
+import base64
 import time
 import json
 import requests
@@ -15,6 +16,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from mail import send_email_notification
+from token_manager import refresh_and_update_env
+
 
 # =====================
 # Load environment
@@ -31,8 +34,9 @@ FOLDER_IDS = [value for key, value in os.environ.items() if key.startswith("DRIV
 
 # Posting Schedule Settings
 MAX_PINS_PER_DAY = int(os.getenv("MAX_PINS_PER_DAY", 3))
-POST_TIME = os.getenv("POST_TIME", "02:30")  # Format: HH:MM
+POST_TIME = os.getenv("POST_TIME", "20:30")  # Format: HH:MM
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
+
 
 PIN_TITLE = "Ma Adya Mahakali"
 PIN_DESCRIPTION = (
@@ -40,7 +44,7 @@ PIN_DESCRIPTION = (
     "#DakshinaKali #KaliMaa #Bhairava #KaalBhairav #Shakti #SanatanDharma #Hinduism "
     "#Hindu #DivineMother #Devi #ShaktiSadhana #KaaliBhakti #Tantra #Aghor #Mahadev "
     "#Rudra #DashaMahavidya #KaliMantra #Adya #Maadya #BatukBhairava #MaKali "
-    "#SwarnakarshanaBhairava #Krishna"
+    "#SwarnakarshanaBhairava #Kali #Krishna"
 )
 PIN_LINK = "https://youtube.com/@praveenrkalabhairava?feature=shared"
 
@@ -132,10 +136,104 @@ def download_images(service, items):
 # =====================
 # Pinterest OAuth & Upload
 # =====================
+def get_pinterest_token():
+    """Read access token from environment variables or file."""
+    try:
+        # ✅ Option 1: Read directly from .env variables (RECOMMENDED)
+        access_token = os.getenv("PINTEREST_ACCESS_TOKEN")
+        if access_token:
+            print("🔐 Loaded Pinterest access token from environment variable.")
+            return access_token
+        
+        # ✅ Option 2: Read from JSON string environment variable
+        token_json_str = os.getenv("PINTEREST_TOKEN_JSON")
+        if token_json_str:
+            token_data = json.loads(token_json_str)
+            print("🔐 Loaded Pinterest token from PINTEREST_TOKEN_JSON environment.")
+            
+            # Check if token is expired
+            if "expires_at" in token_data:
+                if time.time() > token_data["expires_at"]:
+                    print("⏳ Token expired — refreshing & updating Render")
+                    return refresh_and_update_env()
+            
+            return token_data.get("access_token")
+        
+        # ✅ Option 3: Fallback to local file (for local testing)
+        if os.path.exists(TOKEN_FILE):
+            with open(TOKEN_FILE, "r") as f:
+                token_data = json.load(f)
+            print("📁 Loaded Pinterest token from local file.")
+            
+            # Check expiration
+            if "expires_at" in token_data:
+                if time.time() > token_data["expires_at"]:
+                    print("⏳ Token expired — refreshing...")
+                    return refresh_pinterest_token()
+            
+            return token_data.get("access_token")
+        
+        # ❌ No token found
+        print("\n" + "="*60)
+        print("❌ PINTEREST TOKEN NOT FOUND!")
+        print("="*60)
+        print("Add one of these to your .env file:")
+        print("  PINTEREST_ACCESS_TOKEN=your_access_token_here")
+        print("  PINTEREST_REFRESH_TOKEN=your_refresh_token_here (optional)")
+        print("="*60 + "\n")
+        return None
+
+    except Exception as e:
+        print(f"⚠️ Failed to load Pinterest token: {e}")
+        return None
+
+
+def refresh_pinterest_token(token_data):
+    """Refresh Pinterest token loaded from environment."""
+    try:
+        refresh_token = token_data.get("refresh_token")
+        if not refresh_token:
+            print("❌ No refresh token found!")
+            return None
+
+        url = "https://api.pinterest.com/v5/oauth/token"
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": APP_ID,
+            "client_secret": APP_SECRET,
+        }
+
+        res = requests.post(url, data=data)
+        response_json = res.json()
+
+        if "access_token" in response_json:
+            print("🔄 Pinterest token refreshed successfully!")
+            # Note: Can't save back to environment, but token will work for this session
+            return response_json["access_token"]
+        else:
+            print(f"❌ Refresh failed: {response_json}")
+            return None
+
+    except Exception as e:
+        print(f"⚠️ Token refresh error: {e}")
+        return None
+
+
 def pinterest_auth():
-    """Authenticate to Pinterest and store token."""
+    """Authenticate to Pinterest (skip if token exists in environment)."""
+    # ✅ Check if token exists in environment variables
+    if os.getenv("PINTEREST_ACCESS_TOKEN"):
+        print("✅ Pinterest connected using PINTEREST_ACCESS_TOKEN from environment.")
+        return
+    
+    if os.getenv("PINTEREST_TOKEN_JSON"):
+        print("✅ Pinterest connected using PINTEREST_TOKEN_JSON environment.")
+        return
+    
+    # ✅ Check if local token file exists
     if os.path.exists(TOKEN_FILE):
-        print("✅ Pinterest connected using saved token.")
+        print("✅ Pinterest connected using saved token file.")
         return
     
     print("🌐 Opening Pinterest OAuth login...")
@@ -161,12 +259,23 @@ def pinterest_auth():
                     "client_secret": APP_SECRET,
                 }
                 res = requests.post(token_url, data=data)
+                token_json = res.json()
+                
+                # Save to file
                 with open(TOKEN_FILE, "w") as f:
-                    f.write(res.text)
+                    json.dump(token_json, f, indent=2)
+                
+                # Print for environment variable
+                print("\n" + "="*60)
+                print("✅ OAuth success! Token saved to", TOKEN_FILE)
+                print("\n🔑 For .env file, add these lines:")
+                print(f"PINTEREST_ACCESS_TOKEN={token_json.get('access_token', '')}")
+                print(f"PINTEREST_REFRESH_TOKEN={token_json.get('refresh_token', '')}")
+                print("="*60 + "\n")
+                
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b"The authentication flow has completed. You may close this window.")
-                print("✅ OAuth success! Token saved.")
+                self.wfile.write(b"Authentication successful! Check your terminal for the tokens.")
             else:
                 self.send_response(400)
                 self.end_headers()
@@ -175,20 +284,6 @@ def pinterest_auth():
     print("⚙️ Waiting for Pinterest authorization callback...")
     server = HTTPServer(("localhost", 8080), Handler)
     server.handle_request()
-
-def get_pinterest_token():
-    token = os.getenv("PINTEREST_ACCESS_TOKEN")
-    if token:
-        return token
-    if not os.path.exists(TOKEN_FILE):
-        return None
-    try:
-        with open(TOKEN_FILE, "r") as f:
-            return json.load(f).get("access_token")
-    except json.JSONDecodeError:
-        print("❌ Invalid token file format")
-        return None
-
 
 def is_uploaded(filename):
     """Check if a file has already been uploaded."""
@@ -233,52 +328,83 @@ def update_upload_count(count):
         json.dump({'date': today, 'count': count}, f)
 
 def upload_to_pinterest(image_path):
-    """Upload image to Pinterest."""
+    """Upload image to Pinterest (v5 JSON format)."""
     filename = os.path.basename(image_path)
-    
-    # Check if already uploaded
+
     if is_uploaded(filename):
         print(f"⏭️  Already uploaded: {filename}")
         return True
-    
+
     print(f"📸 Uploading {filename} to Pinterest...")
-    
+
+    # ----------------------------------------------------------
+    # 🔐 STEP 1 — Get token (may auto-refresh if expired)
+    # ----------------------------------------------------------
     token = get_pinterest_token()
+
+    # If still no token → force a refresh using Render API
     if not token:
-        error_msg = "Pinterest access token not found."
-        print(f"❌ {error_msg}")
-        send_email_notification("Pinterest Token Missing", error_msg)
-        return False
+        print("❌ No valid token — forcing refresh via Render...")
+        from token_manager import refresh_and_update_env
+        token = refresh_and_update_env()
+
+        if not token:
+            print("❌ Could not refresh token. Upload aborted.")
+            return False
     
+    # ----------------------------------------------------------
+    # 🖼️ STEP 2 — Prepare upload request
+    # ----------------------------------------------------------
     try:
         url = "https://api.pinterest.com/v5/pins"
-        headers = {"Authorization": f"Bearer {token}"}
-        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
         with open(image_path, "rb") as img_file:
-            files = {"media": img_file}
-            data = {
-                "board_id": BOARD_ID,
-                "title": PIN_TITLE,
-                "description": PIN_DESCRIPTION,
-                "link": PIN_LINK,
+            img_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+
+        payload = {
+            "board_id": BOARD_ID,
+            "title": PIN_TITLE,
+            "description": PIN_DESCRIPTION,
+            "link": PIN_LINK,
+            "media_source": {
+                "source_type": "image_base64",
+                "content_type": "image/jpeg",
+                "data": img_base64
             }
-            res = requests.post(url, headers=headers, files=files, data=data)
-        
+        }
+
+        res = requests.post(url, headers=headers, json=payload)
+
+        # ----------------------------------------------------------
+        # ⚠️ STEP 3 — If token expired → auto-refresh and RETRY once
+        # ----------------------------------------------------------
+        if res.status_code == 401:
+            print("🔄 Token expired during upload — refreshing...")
+            from token_manager import refresh_and_update_env
+            token = refresh_and_update_env()
+
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                res = requests.post(url, headers=headers, json=payload)
+
+        # After retry:
         if res.status_code in (200, 201):
-            print(f"✅ Uploaded: {filename}")
+            print(f"✅ Uploaded successfully: {filename}")
             mark_as_uploaded(filename)
             return True
         else:
-            error_msg = f"Upload failed for {filename}: {res.text}"
-            print(f"❌ {error_msg}")
-            send_email_notification("Pinterest Upload Failed", error_msg)
+            print(f"❌ Upload failed ({res.status_code}): {res.text}")
             return False
-            
+
     except Exception as e:
-        error_msg = f"Error uploading {filename}: {str(e)}"
-        print(f"❌ {error_msg}")
-        send_email_notification("Pinterest Upload Error", error_msg)
+        print(f"⚠️ Upload error for {filename}: {e}")
         return False
+
+
 
 def get_pending_uploads():
     """Get list of downloaded files that haven't been uploaded yet."""
