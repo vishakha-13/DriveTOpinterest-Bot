@@ -3,11 +3,13 @@ name: Pinterest Daily Cron
 on:
   schedule:
     - cron: "0 15 * * *"   # 8:30 PM IST (15:00 UTC)
-  workflow_dispatch:       # allow manual run also
+  workflow_dispatch:        # Allow manual run
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # REQUIRED to commit upload logs back to repo
 
     steps:
       - name: Checkout repo
@@ -21,15 +23,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 👇 Get today's date (YYYY-MM-DD)
+      # 👇 Create downloads & logs folders (repo-safe)
+      - name: Prepare folders
+        run: |
+          mkdir -p downloads
+          mkdir -p logs
+
+      # 👇 Get date (optional but safe)
       - name: Get Today Date
         id: date
         run: echo "today=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      - name: Run script
-        run: |
-          echo "Today's date: $TODAY_DATE"
-          python cron_job.py
+      # 👇 Run your cron job script
+      - name: Run Pinterest Bot
+        run: python cron_job.py
         env:
           TODAY_DATE: ${{ steps.date.outputs.today }}
           PINTEREST_REFRESH_TOKEN: ${{ secrets.PINTEREST_REFRESH_TOKEN }}
@@ -42,3 +49,19 @@ jobs:
           MAX_PINS_PER_DAY: ${{ secrets.MAX_PINS_PER_DAY }}
           REDIRECT_URI: ${{ secrets.REDIRECT_URI }}
           TIMEZONE: ${{ secrets.TIMEZONE }}
+
+      # 👇 COMMIT updated uploaded_files.txt + last_upload_date.txt back to repo
+      - name: Commit updated logs
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          
+          # Add log files only if changed
+          git add uploaded_files.txt last_upload_date.txt || true
+          
+          if ! git diff --cached --quiet; then
+            git commit -m "Update upload logs [skip ci]"
+            git push
+          else
+            echo "No changes in log files."
+          fi
