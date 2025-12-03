@@ -1,14 +1,14 @@
-# cron_job.py
-from token_manager import refresh_token
-from main import post_to_pinterest
+from token_manager import refresh_access_token
+from main import run_daily_uploads
 
 def run():
-    access_token = refresh_token()  # now returns a string
-    if not access_token:
-        print("❌ Failed to refresh access token. Aborting job.")
+    tokens = refresh_access_token()
+    if not tokens:
+        print("❌ Failed to refresh Pinterest token. Aborting.")
         return
-    result = post_to_pinterest(access_token)
-    print("Job finished:", result)
+
+    access_token = tokens["access_token"]
+    run_daily_uploads(access_token)
 
 if __name__ == "__main__":
     run()

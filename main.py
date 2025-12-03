@@ -18,6 +18,10 @@ from googleapiclient.http import MediaIoBaseDownload
 from mail import send_email_notification
 from token_manager import refresh_and_update_env
 
+# =====================
+# Tracking file (persisted in repo)
+# =====================
+TRACK_FILE = "uploaded_files.json"
 
 # =====================
 # Load environment
@@ -31,12 +35,10 @@ BOARD_ID = os.getenv("PINTEREST_BOARD_ID")
 
 FOLDER_IDS = [value for key, value in os.environ.items() if key.startswith("DRIVE_FOLDER_ID_")]
 
-
 # Posting Schedule Settings
 MAX_PINS_PER_DAY = int(os.getenv("MAX_PINS_PER_DAY", 3))
 POST_TIME = os.getenv("POST_TIME", "20:30")  # Format: HH:MM
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
-
 
 PIN_TITLE = "Ma Adya Mahakali"
 PIN_DESCRIPTION = (
@@ -51,7 +53,7 @@ PIN_LINK = "https://youtube.com/@praveenrkalabhairava?feature=shared"
 TOKEN_FILE = "pinterest_token.json"
 DOWNLOAD_DIR = "downloads"
 LOG_DIR = "logs"
-UPLOADED_LOG = "uploaded_files.txt"
+UPLOADED_LOG = "uploaded_files.txt"   # kept for compatibility; not used for tracking now
 LAST_UPLOAD_DATE_FILE = "last_upload_date.txt"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -132,6 +134,31 @@ def download_images(service, items):
         print(f"⏭️  Skipped {skipped} already downloaded files")
     
     return downloaded
+
+# =====================
+# Tracking helpers (persist in uploaded_files.json)
+# =====================
+def load_uploaded_list():
+    """Return a set of filenames already uploaded (from TRACK_FILE)."""
+    try:
+        if not os.path.exists(TRACK_FILE):
+            return set()
+        with open(TRACK_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            uploaded = data.get("uploaded", [])
+            return set(uploaded)
+    except Exception as e:
+        print(f"⚠️ Could not load {TRACK_FILE}: {e}")
+        return set()
+
+def save_uploaded_list(uploaded_set):
+    """Save the set of uploaded filenames into TRACK_FILE (sorted list for readability)."""
+    try:
+        data = {"uploaded": sorted(list(uploaded_set))}
+        with open(TRACK_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Could not save {TRACK_FILE}: {e}")
 
 # =====================
 # Pinterest OAuth & Upload
@@ -247,21 +274,27 @@ def pinterest_auth():
     server = HTTPServer(("localhost", 8080), Handler)
     server.handle_request()
 
+# Replace local-file tracking with TRACK_FILE-based tracking
 def is_uploaded(filename):
-    """Check if a file has already been uploaded."""
-    if not os.path.exists(UPLOADED_LOG):
+    """Check if filename exists in uploaded_files.json (persistent)."""
+    try:
+        uploaded = load_uploaded_list()
+        return filename in uploaded
+    except:
         return False
-    with open(UPLOADED_LOG, 'r') as f:
-        uploaded_files = f.read().splitlines()
-    return filename in uploaded_files
 
 def mark_as_uploaded(filename):
-    """Mark a file as uploaded."""
-    with open(UPLOADED_LOG, 'a') as f:
-        f.write(filename + '\n')
+    """Add filename to uploaded_files.json (persistent)."""
+    try:
+        uploaded = load_uploaded_list()
+        if filename not in uploaded:
+            uploaded.add(filename)
+            save_uploaded_list(uploaded)
+    except Exception as e:
+        print(f"⚠️ mark_as_uploaded error: {e}")
 
 def get_today_upload_count():
-    """Get number of uploads done today."""
+    """Get number of uploads done today (keeps using last_upload_date.txt)."""
     if not os.path.exists(LAST_UPLOAD_DATE_FILE):
         return 0
     
@@ -282,7 +315,7 @@ def get_today_upload_count():
         return 0
 
 def update_upload_count(count):
-    """Update today's upload count."""
+    """Update today's upload count (keeps using last_upload_date.txt)."""
     tz = pytz.timezone(TIMEZONE)
     today = datetime.now(tz).strftime('%Y-%m-%d')
     
@@ -366,8 +399,6 @@ def upload_to_pinterest(image_path):
         print(f"⚠️ Upload error for {filename}: {e}")
         return False
 
-
-
 def get_pending_uploads():
     """Get list of downloaded files that haven't been uploaded yet."""
     pending = []
@@ -377,6 +408,7 @@ def get_pending_uploads():
                 if not is_uploaded(filename):
                     pending.append(os.path.join(DOWNLOAD_DIR, filename))
     return pending
+
 def post_to_pinterest(access_token, max_pins=None):
     """
     Called by cron_job.py.
@@ -414,6 +446,54 @@ def post_to_pinterest(access_token, max_pins=None):
     print(f"✅ post_to_pinterest summary: {summary}")
     return summary
 
+# New helper used by the cron-job approach that gets a fresh access token and runs a one-shot upload
+def run_daily_uploads(access_token):
+    """
+    One-shot run: downloads drive images, selects up to MAX_PINS_PER_DAY
+    that are not in uploaded_files.json, uploads them and updates the track file.
+    """
+    if not access_token:
+        print("❌ No access token provided to run_daily_uploads(). Aborting.")
+        return {"posted": 0, "error": "no_access_token"}
+
+    os.environ["PINTEREST_ACCESS_TOKEN"] = access_token
+
+    # Load uploaded history
+    uploaded_files = load_uploaded_list()
+
+    # Connect to Drive
+    service = connect_drive()
+
+    # Download images from all configured folders
+    all_downloads = []
+    for folder_id in FOLDER_IDS:
+        try:
+            items = list_images(service, folder_id)
+            downloaded = download_images(service, items)
+            all_downloads.extend(downloaded)
+        except Exception as e:
+            print(f"⚠️ Error while processing Drive folder {folder_id}: {e}")
+
+    # Filter pending (not in uploaded_files)
+    pending = []
+    for path in sorted(all_downloads):
+        name = os.path.basename(path)
+        if name not in uploaded_files:
+            pending.append(path)
+
+    to_upload = pending[:MAX_PINS_PER_DAY]
+    print(f"📌 {len(to_upload)} images to upload this run (limit {MAX_PINS_PER_DAY}).")
+
+    posted = 0
+    for img in to_upload:
+        ok = upload_to_pinterest(img)
+        if ok:
+            posted += 1
+            # mark_as_uploaded() already updates TRACK_FILE
+        time.sleep(1)
+
+    print(f"✅ run_daily_uploads finished. Posted: {posted}")
+    return {"posted": posted}
 
 def is_posting_time():
     """Check if current time matches the scheduled posting time."""
