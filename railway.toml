@@ -1,0 +1,9 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+numReplicas = 0    # No always-on server, free plan safe
+
+[cron."daily_post"]
+schedule = "0 15 * * *"
+command = "python cron_job.py"

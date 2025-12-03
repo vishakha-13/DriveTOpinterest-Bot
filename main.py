@@ -137,87 +137,49 @@ def download_images(service, items):
 # Pinterest OAuth & Upload
 # =====================
 def get_pinterest_token():
-    """Read access token from environment variables or file."""
-    try:
-        # ✅ Option 1: Read directly from .env variables (RECOMMENDED)
-        access_token = os.getenv("PINTEREST_ACCESS_TOKEN")
-        if access_token:
-            print("🔐 Loaded Pinterest access token from environment variable.")
-            return access_token
-        
-        # ✅ Option 2: Read from JSON string environment variable
-        token_json_str = os.getenv("PINTEREST_TOKEN_JSON")
-        if token_json_str:
-            token_data = json.loads(token_json_str)
-            print("🔐 Loaded Pinterest token from PINTEREST_TOKEN_JSON environment.")
-            
-            # Check if token is expired
-            if "expires_at" in token_data:
-                if time.time() > token_data["expires_at"]:
-                    print("⏳ Token expired — refreshing & updating Render")
-                    return refresh_and_update_env()
-            
-            return token_data.get("access_token")
-        
-        # ✅ Option 3: Fallback to local file (for local testing)
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, "r") as f:
-                token_data = json.load(f)
-            print("📁 Loaded Pinterest token from local file.")
-            
-            # Check expiration
-            if "expires_at" in token_data:
-                if time.time() > token_data["expires_at"]:
-                    print("⏳ Token expired — refreshing...")
-                    return refresh_pinterest_token()
-            
-            return token_data.get("access_token")
-        
-        # ❌ No token found
-        print("\n" + "="*60)
-        print("❌ PINTEREST TOKEN NOT FOUND!")
-        print("="*60)
-        print("Add one of these to your .env file:")
-        print("  PINTEREST_ACCESS_TOKEN=your_access_token_here")
-        print("  PINTEREST_REFRESH_TOKEN=your_refresh_token_here (optional)")
-        print("="*60 + "\n")
+    """Always load access token from environment or refresh with refresh token."""
+    access_token = os.getenv("PINTEREST_ACCESS_TOKEN")
+    refresh_token = os.getenv("PINTEREST_REFRESH_TOKEN")
+
+    # If we already have access token, return it
+    if access_token:
+        return access_token
+
+    # If no access token but refresh token exists → refresh
+    if refresh_token:
+        print("🔄 No access token found — refreshing using refresh token...")
+        return refresh_and_update_env()
+
+    print("❌ No Pinterest tokens found! Add this to .env:")
+    print("PINTEREST_REFRESH_TOKEN=your_refresh_token")
+    return None
+
+
+def refresh_pinterest_token(token_data=None):
+    """Refresh token only using environment refresh token."""
+    refresh_token = os.getenv("PINTEREST_REFRESH_TOKEN")
+
+    if not refresh_token:
+        print("❌ Refresh token missing!")
         return None
 
-    except Exception as e:
-        print(f"⚠️ Failed to load Pinterest token: {e}")
-        return None
+    url = "https://api.pinterest.com/v5/oauth/token"
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": APP_ID,
+        "client_secret": APP_SECRET,
+    }
 
+    res = requests.post(url, data=data)
+    response = res.json()
 
-def refresh_pinterest_token(token_data):
-    """Refresh Pinterest token loaded from environment."""
-    try:
-        refresh_token = token_data.get("refresh_token")
-        if not refresh_token:
-            print("❌ No refresh token found!")
-            return None
+    if "access_token" in response:
+        print("🔄 Token refreshed successfully")
+        return response["access_token"]
 
-        url = "https://api.pinterest.com/v5/oauth/token"
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": APP_ID,
-            "client_secret": APP_SECRET,
-        }
-
-        res = requests.post(url, data=data)
-        response_json = res.json()
-
-        if "access_token" in response_json:
-            print("🔄 Pinterest token refreshed successfully!")
-            # Note: Can't save back to environment, but token will work for this session
-            return response_json["access_token"]
-        else:
-            print(f"❌ Refresh failed: {response_json}")
-            return None
-
-    except Exception as e:
-        print(f"⚠️ Token refresh error: {e}")
-        return None
+    print("❌ Failed to refresh token:", response)
+    return None
 
 
 def pinterest_auth():
@@ -415,6 +377,43 @@ def get_pending_uploads():
                 if not is_uploaded(filename):
                     pending.append(os.path.join(DOWNLOAD_DIR, filename))
     return pending
+def post_to_pinterest(access_token, max_pins=None):
+    """
+    Called by cron_job.py.
+    - access_token: freshly obtained access token (string)
+    - max_pins: max pins to post in this run (defaults to MAX_PINS_PER_DAY)
+    """
+    if not access_token:
+        print("❌ No access token provided to post_to_pinterest(). Aborting.")
+        return {"posted": 0, "error": "no_access_token"}
+
+    # Ensure upload functions that call get_pinterest_token() pick this token:
+    os.environ["PINTEREST_ACCESS_TOKEN"] = access_token
+
+    if max_pins is None:
+        try:
+            max_pins = int(MAX_PINS_PER_DAY)
+        except Exception:
+            max_pins = 3
+
+    pending = get_pending_uploads()
+    if not pending:
+        print("📭 No pending images to upload.")
+        return {"posted": 0}
+
+    to_upload = pending[:max_pins]
+    success = 0
+    for img in to_upload:
+        ok = upload_to_pinterest(img)
+        if ok:
+            success += 1
+        # small delay to avoid hammering the API
+        time.sleep(1)
+
+    summary = {"posted": success, "attempted": len(to_upload)}
+    print(f"✅ post_to_pinterest summary: {summary}")
+    return summary
+
 
 def is_posting_time():
     """Check if current time matches the scheduled posting time."""

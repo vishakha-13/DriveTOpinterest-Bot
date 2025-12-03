@@ -1,24 +1,15 @@
+# token_manager.py
 import os
 import json
 import time
 import requests
 
-RENDER_API_KEY = os.getenv("RENDER_API_KEY")
-SERVICE_ID = os.getenv("RENDER_SERVICE_ID")
 APP_ID = os.getenv("PINTEREST_APP_ID")
 APP_SECRET = os.getenv("PINTEREST_APP_SECRET")
 
 
-def refresh_and_update_env():
-    """Refresh Pinterest token and update Render env variables automatically."""
-
-    refresh_token = os.getenv("PINTEREST_REFRESH_TOKEN")
-    if not refresh_token:
-        print("❌ No refresh token found! Cannot refresh.")
-        return None
-
-    print("🔄 Refreshing Pinterest token...")
-
+def _call_refresh_api(refresh_token):
+    """Internal: call Pinterest token endpoint and return parsed JSON."""
     url = "https://api.pinterest.com/v5/oauth/token"
     data = {
         "grant_type": "refresh_token",
@@ -26,39 +17,44 @@ def refresh_and_update_env():
         "client_id": APP_ID,
         "client_secret": APP_SECRET,
     }
+    res = requests.post(url, data=data, timeout=30)
+    try:
+        return res.json()
+    except Exception:
+        return {"error": "invalid_json_response", "raw": res.text}
 
-    res = requests.post(url, data=data)
-    result = res.json()
-    print("Pinterest Response:", result)
 
-    if "access_token" not in result:
-        print("❌ Token refresh failed:", result)
+def refresh_token():
+    """
+    Public: refresh access token using the refresh token from env.
+    Returns access_token string on success, or None on failure.
+    """
+    refresh_token = os.getenv("PINTEREST_REFRESH_TOKEN")
+    if not refresh_token:
+        print("❌ No REFRESH TOKEN found in environment variables!")
         return None
 
-    new_access_token = result["access_token"]
-    new_refresh_token = result.get("refresh_token", refresh_token)  # fallback
+    print("🔄 Refreshing Pinterest access token...")
+    result = _call_refresh_api(refresh_token)
+    print("Pinterest Token Response:", result)
 
-    print("✅ Token refreshed. Updating Render environment…")
+    if "access_token" not in result:
+        print("❌ Failed to refresh token:", result)
+        return None
 
-    update_url = f"https://api.render.com/v1/services/{SERVICE_ID}/env-vars"
+    access_token = result["access_token"]
+    # Pinterest sometimes returns a new refresh_token; keep it if present
+    new_refresh = result.get("refresh_token", refresh_token)
 
-    payload = {
-        "envVars": [
-            {"key": "PINTEREST_ACCESS_TOKEN", "value": new_access_token},
-            {"key": "PINTEREST_REFRESH_TOKEN", "value": new_refresh_token},
-        ]
-    }
+    # Optionally: you could persist the refreshed token somewhere secure.
+    # For GitHub Actions we generally just return the access token for this run.
+    print("✅ Token refresh complete. Access token created for this job.")
+    return access_token
 
-    headers = {
-        "Authorization": f"Bearer {RENDER_API_KEY}",
-        "Content-Type": "application/json"
-    }
 
-    r = requests.put(update_url, headers=headers, json=payload)
-
-    if r.status_code == 200:
-        print("🎉 SUCCESS! Render env variables updated automatically.")
-    else:
-        print("❌ FAILED to update Render:", r.text)
-
-    return new_access_token
+def refresh_and_update_env():
+    """
+    Compatibility wrapper used by existing code.
+    Returns the new access_token (string) or None.
+    """
+    return refresh_token()
