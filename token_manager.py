@@ -1,6 +1,5 @@
 # token_manager.py
 import os
-import json
 import requests
 
 APP_ID = os.getenv("PINTEREST_APP_ID")
@@ -18,8 +17,8 @@ def _call_refresh_api(refresh_token):
         "client_secret": APP_SECRET,
     }
 
-    # IMPORTANT: Pinterest requires JSON, not form-data
-    res = requests.post(url, json=data, timeout=30)
+    # IMPORTANT: Pinterest REQUIRES form-data, NOT JSON
+    res = requests.post(url, data=data, timeout=30)
 
     try:
         return res.json()
@@ -39,7 +38,7 @@ def refresh_access_token():
 
     print("🔄 Refreshing Pinterest access token...")
     result = _call_refresh_api(refresh_token)
-    print("Pinterest Token Response:", result)
+    print("🔐 Pinterest Token Response:", result)
 
     if "access_token" not in result:
         print("❌ Failed to refresh token:", result)
@@ -51,6 +50,6 @@ def refresh_access_token():
     return access_token
 
 
-# Compatibility wrapper (used by your main.py)
 def refresh_and_update_env():
+    """Compatibility wrapper used by your existing code."""
     return refresh_access_token()
