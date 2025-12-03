@@ -2,18 +2,21 @@ name: Pinterest Daily Cron
 
 on:
   schedule:
-    - cron: "0 15 * * *"   # 8:30 PM IST (15:00 UTC)
-  workflow_dispatch:        # Allow manual run
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write   # REQUIRED to commit upload logs back to repo
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -23,19 +26,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 👇 Create downloads & logs folders (repo-safe)
-      - name: Prepare folders
-        run: |
-          mkdir -p downloads
-          mkdir -p logs
-
-      # 👇 Get date (optional but safe)
       - name: Get Today Date
         id: date
         run: echo "today=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      # 👇 Run your cron job script
-      - name: Run Pinterest Bot
+      - name: Run script
         run: python cron_job.py
         env:
           TODAY_DATE: ${{ steps.date.outputs.today }}
@@ -50,18 +45,10 @@ jobs:
           REDIRECT_URI: ${{ secrets.REDIRECT_URI }}
           TIMEZONE: ${{ secrets.TIMEZONE }}
 
-      # 👇 COMMIT updated uploaded_files.txt + last_upload_date.txt back to repo
-      - name: Commit updated logs
+      - name: Commit changes
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
-          
-          # Add log files only if changed
-          git add uploaded_files.txt last_upload_date.txt || true
-          
-          if ! git diff --cached --quiet; then
-            git commit -m "Update upload logs [skip ci]"
-            git push
-          else
-            echo "No changes in log files."
-          fi
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add uploaded_files.json
+          git commit -m "Update uploaded files list for ${{ steps.date.outputs.today }}" || echo "No changes to commit"
+          git push
